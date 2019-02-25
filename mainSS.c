@@ -8,6 +8,13 @@
 struct Point {
     int x;
     int y;
+    int salNum;
+};
+
+struct SalPoint {
+    int x;
+    int y;
+    int filled;
 };
 
 float **qM, **pM, **ssd3, **subC; //p_s
@@ -18,17 +25,19 @@ float **pmask, **pC, **ppom, **pe1mask; // nx + p_r
 
 float ***PI; // nx + p_r 3d
 
-float ***I; // nx 3d
+float ***I;
+int   ***SI; // nx 3d
 
 float **e1mask, **e2mask, **mask, **C; // nx
 
 struct Point *points; //
 
-struct Point **sal;
+struct SalPoint **sals;
+int *salLen;
 
 float *mu, *mv, *ml, *PIgu, *PIgv, *D;
 
-void initVars(int p_r, int p_s, int nx, int ny, int nz, int sals) {
+void initVars(int p_r, int p_s, int nx, int ny, int nz, int salNumb) {
     int iii,jjj;
 
     qM   = calloc(p_s, sizeof(float *));
@@ -72,11 +81,14 @@ void initVars(int p_r, int p_s, int nx, int ny, int nz, int sals) {
         }
     }
 
-    I = calloc(nx, sizeof(float **));
+    I  = calloc(nx, sizeof(float **));
+    SI = calloc(nx, sizeof(int **));
     for(iii = 0; iii < nx; iii++) {
-        I[iii] = calloc(ny, sizeof(float *));
+        I [iii] = calloc(ny, sizeof(float *));
+        SI[iii] = calloc(ny, sizeof(int *));
         for(jjj = 0; jjj < ny; jjj++) {
-            I[iii][jjj] = calloc(nz, sizeof(float));
+            I [iii][jjj] = calloc(nz, sizeof(float));
+            SI[iii][jjj] = calloc(nz, sizeof(int));
         }
     }
 
@@ -93,9 +105,10 @@ void initVars(int p_r, int p_s, int nx, int ny, int nz, int sals) {
 
     points = calloc(nx*ny, sizeof(struct Point));
 
-    sal    = calloc(sals,  sizeof(struct Point *));
-    for(iii = 0; iii < sals; iii++) {
-        sal[iii] = calloc(4*nx, sizeof(struct Point));
+    sals   = calloc(salNumb, sizeof(struct SalPoint *));
+    salLen = calloc(salNumb, sizeof(int));
+    for(iii = 0; iii < salNumb; iii++) {
+        sals[iii] = calloc(4*nx, sizeof(struct SalPoint));
     }
 
     mu     = calloc(nx*ny, sizeof(float));
@@ -106,7 +119,7 @@ void initVars(int p_r, int p_s, int nx, int ny, int nz, int sals) {
     D      = calloc(nx*ny, sizeof(float));
 }
 
-void clearVars(int p_r, int p_s, int nx, int ny, int nz) {
+void clearVars(int p_r, int p_s, int nx, int ny, int nz, int salNumb) {
     //float **qM, **pM, **ssd3, **subC; //p_s
     int iii,jjj;
     for(iii = 0; iii < 2*p_r+1; iii++) {
@@ -153,14 +166,17 @@ void clearVars(int p_r, int p_s, int nx, int ny, int nz) {
     }
     free(PI);
 
-    // float ***I; // nx 3d
+    // float ***I, ***SI; // nx 3d
     for(iii = 0; iii < nx; iii++) {
         for(jjj = 0; jjj < ny; jjj++) {
             free(I[iii][jjj]);
+            free(SI[iii][jjj]);
         }
         free(I[iii]);
+        free(SI[iii]);
     }
     free(I);
+    free(SI);
 
     //float **e1mask, **e2mask, **mask, **c; // nx
     for(iii = 0; iii < nx; iii++) {
@@ -174,6 +190,12 @@ void clearVars(int p_r, int p_s, int nx, int ny, int nz) {
     free(mask);
     free(C);
 
+    for(iii = 0; iii < salNumb; iii++) {
+        free(sals[iii]);
+    }
+    free(sals);
+    free(salLen);
+
     //struct Point *points; //
     free(points);
     free(mu);
@@ -182,6 +204,52 @@ void clearVars(int p_r, int p_s, int nx, int ny, int nz) {
     free(PIgu);
     free(PIgv);
     free(D);
+}
+
+void findAndDelete(int salNumb, int _x, int _y)
+{
+    int i;
+    for(i=0; i < salLen[salNumb]; i++)
+    {
+        if(sals[salNumb][i].x == _x && sals[salNumb][i].y == _y)
+        {
+            sals[salNumb][i].filled = 1;
+            return;
+        }
+    }
+}
+
+int existInSals(int salAmount, int _x, int _y)
+{
+    int i, salNumb;
+    for(salNumb=0; salNumb<salAmount; salNumb++)
+    {
+        for(i=0; i < salLen[salNumb]; i++)
+        {
+            if(sals[salNumb][i].x == _x && sals[salNumb][i].y == _y && sals[salNumb][i].filled < 1)
+            {
+                return salNumb;
+            }
+        }
+    }
+    return -1;
+}
+
+int allFilled(int salNumb)
+{
+    int i,j;
+    for(i=0; i < salNumb; i++)
+    {
+        for(j=0; j < salLen[i]; j++)
+        {
+            if(sals[i][j].filled < 1)
+            {
+                return 0;
+            }
+        }
+
+    }
+    return 1;
 }
 
 void padarray2d(
@@ -254,6 +322,35 @@ void imerode(int nx, int ny, float **mask, float **out, int times)
                 }
                 if (pres == 1)
                     out[i][j] = 0;
+            }
+        }
+    }
+}
+
+void imdilate(int nx, int ny, float **mask, float **out, int times)
+{
+    int i, j, i0, j0, t, ii, jj, pres;
+    for (t = 0; t < times; t++)
+    {
+        padarray2d(nx,ny,1,mask,ppom);
+        for (i = 0; i < nx; i++)
+        {
+            i0 = i+1;
+            for (j = 0; j < ny; j++)
+            {
+                j0        = j+1;
+                pres      = 0;
+                out[i][j] = mask[i][j];
+                for (ii = (i0-1); ii < (i0+2); ii++)
+                {
+                    for (jj = (j0-1); jj < (j0+2); jj++)
+                    {
+                        if (pres == 0 && ppom[ii][jj] > 0)
+                            pres = 1;
+                    }
+                }
+                if (pres == 1)
+                    out[i][j] = 1;
             }
         }
     }
@@ -609,23 +706,25 @@ void mexFunction(int numOut, mxArray *pmxOut[],
     int ny               = mxGetScalar(pmxIn[1]);
     int nz               = mxGetScalar(pmxIn[2]);
     double *I_i          = mxGetPr(pmxIn[3]);
-    double *mask_i       = mxGetPr(pmxIn[4]);
-    double *C_i          = mxGetPr(pmxIn[5]);
+    double *SI_i         = mxGetPr(pmxIn[4]);
+    double *mask_i       = mxGetPr(pmxIn[5]);
+    double *C_i          = mxGetPr(pmxIn[6]);
 
-    int p_r              = mxGetScalar(pmxIn[6]);
-    int s_r              = mxGetScalar(pmxIn[7]);
-    float alfa           = mxGetScalar(pmxIn[8]);
+    int p_r              = mxGetScalar(pmxIn[7]);
+    int s_r              = mxGetScalar(pmxIn[8]);
+    float alfa           = mxGetScalar(pmxIn[9]);
+    int salAmount        = mxGetScalar(pmxIn[10]);
 
-    int x,y,min_x,max_x,x0,y0,min_y,max_y,i,j,it,in4d,in2d,k,l,c_it,p;
+    int x,y,min_x,max_x,x0,y0,min_y,max_y,i,j,ii,jj,it,in4d,in2d,k,l,c_it,p,salNumb;
     int pnx = 2*p_r + nx;
     int pny = 2*p_r + ny;
     
-    // printfFnc("nx %d ny %d nz %d p_r %d s_r %d alfa %f. \n", nx, ny, nz, p_r, s_r, alfa);
+    printfFnc("nx %d ny %d nz %d p_r %d s_r %d alfa %f salAmount %d \n", nx, ny, nz, p_r, s_r, alfa, salAmount);
 
     int p_s = 2*p_r+1;
-    initVars(p_r,p_s,nx,ny,nz);
+    initVars(p_r,p_s,nx,ny,nz,salAmount);
 
-    // printfFnc("Koniec inicjalizacji zmiennych. \n");
+    printfFnc("Koniec inicjalizacji zmiennych. \n");
     c_it=0;
     it  =0;
     while(c_it<nz)
@@ -635,7 +734,8 @@ void mexFunction(int numOut, mxArray *pmxOut[],
             in2d=0;
             while(in2d<nx*ny)
             {
-                I[in2d%nx][in2d/nx][c_it] = (float)I_i[it++];
+                I [in2d%nx][in2d/nx][c_it] = (float)I_i [it];
+                SI[in2d%nx][in2d/nx][c_it] = (int)SI_i[it++];
                 in2d++;
             }
         }
@@ -650,10 +750,228 @@ void mexFunction(int numOut, mxArray *pmxOut[],
 
     padarray2d(nx,ny,p_r,C,pC);
 
-    // printfFnc("Koniec przepisania zmiennych. \n");
+    // Salient structures points
+    for (i=0; i<nx; i++)
+    {
+        for (j=0; j<ny; j++)
+        {
+            if(SI[i][j][0] == 1
+            && SI[i][j][1] == 0
+            && SI[i][j][2] == 0)
+            {
+                sals[0][salLen[0]].x      = i;
+                sals[0][salLen[0]].y      = j;
+                sals[0][salLen[0]].filled = 0;
+                if (mask[i][j] == 1) {
+                    sals[0][salLen[0]].filled = 1;
+                }
+                salLen[0]++;
+            }
+
+            if(SI[i][j][0] == 0
+            && SI[i][j][1] == 1
+            && SI[i][j][2] == 0)
+            {
+                sals[1][salLen[1]].x      = i;
+                sals[1][salLen[1]].y      = j;
+                sals[1][salLen[1]].filled = 0;
+                if (mask[i][j] == 1) {
+                    sals[1][salLen[1]].filled = 1;
+                }
+                salLen[1]++;
+            }
+
+            if(SI[i][j][0] == 0
+            && SI[i][j][1] == 0
+            && SI[i][j][2] == 1)
+            {
+                sals[2][salLen[2]].x      = i;
+                sals[2][salLen[2]].y      = j;
+                sals[2][salLen[2]].filled = 0;
+                if (mask[i][j] == 1) {
+                    sals[2][salLen[2]].filled = 1;
+                }
+                salLen[2]++;
+            }
+
+            if(SI[i][j][0] == 0
+            && SI[i][j][1] == 1
+            && SI[i][j][2] == 1)
+            {
+                sals[3][salLen[3]].x      = i;
+                sals[3][salLen[3]].y      = j;
+                sals[3][salLen[3]].filled = 0;
+                if (mask[i][j] == 1) {
+                    sals[3][salLen[3]].filled = 1;
+                }
+                salLen[3]++;
+            }
+
+            if(SI[i][j][0] == 1
+            && SI[i][j][1] == 1
+            && SI[i][j][2] == 0)
+            {
+                sals[4][salLen[4]].x      = i;
+                sals[4][salLen[4]].y      = j;
+                sals[4][salLen[4]].filled = 0;
+                if (mask[i][j] == 1) {
+                    sals[4][salLen[4]].filled = 1;
+                }
+                salLen[4]++;
+            }
+
+            if(SI[i][j][0] == 1
+            && SI[i][j][1] == 0
+            && SI[i][j][2] == 1)
+            {
+                sals[5][salLen[5]].x      = i;
+                sals[5][salLen[5]].y      = j;
+                sals[5][salLen[5]].filled = 0;
+                if (mask[i][j] == 1) {
+                    sals[5][salLen[5]].filled = 1;
+                }
+                salLen[5]++;
+            }
+        }
+    }
+
+    printfFnc("SalLen[0] %d SalLen[1] %d SalLen[2] %d. \n", salLen[0], salLen[1], salLen[2]);
+
+    printfFnc("Koniec przepisania zmiennych. \n");
     int prev     = -1;
     int done     = -1;
+    int salDone  = -1;
     int giveInfo = 0;
+
+    //SAL INPAINTING
+    printfFnc("Sal inpainting. \n");
+    while (salDone != 1 && done != 1 && prev != sumMatrix(nx,ny,mask))
+    {
+        // if (giveInfo == 10)
+        // {
+        printfFnc("Zaawansowanie: %f \n", sumMatrix(nx,ny,mask)/nx/ny*100);
+        // giveInfo = 0;
+        // }
+        prev = sumMatrix(nx,ny,mask);
+        padarray2d(nx,ny,p_r,mask,pmask);
+        padarray3d(nx,ny,nz,p_r,I,PI);
+        imdilate(nx,ny,mask,e1mask,1);
+
+        int len = 0;
+
+        for (i = 0; i < nx; i++)
+        {
+            for (j = 0; j < ny; j++)
+            {
+                if(e1mask[i][j] != mask[i][j])
+                {
+                    if(i > 0 && i < (nx-1)
+                    && j > 0 && j < (ny-1))
+                    {
+                        int pom = existInSals(salAmount,i,j);
+                        if( pom > -1 )
+                        {
+                            points[len].x      = i;
+                            points[len].y      = j;
+                            points[len].salNum = pom;
+                            len++;
+                        }
+                    }
+                }
+            }
+        }
+
+        //printfFnc("Wyznaczone pointy: %d. \n", len);
+        
+        for (i=0; i<len; i++)
+        {
+            sub3Matrix3D(p_r,pnx,pny,nz,PI,points[i].x+p_r,points[i].y+p_r,pI);
+            subMatrix(p_r,pnx,pny,pmask,points[i].x+p_r,points[i].y+p_r,pM);
+
+            //showMatrix3D(p_s,p_s,nz,pI);
+            //showMatrix2D(p_s,p_s,pM);
+            float min_sum = 99999999;
+            int qx        = -1;
+            int qy        = -1;
+            for(j=0; j<salLen[points[i].salNum]; j++)
+            {
+                x0 = sals[points[i].salNum][j].x + p_r;
+                y0 = sals[points[i].salNum][j].y + p_r;
+                subMatrix(p_r,pnx,pny,pmask,x0,y0,qM);
+                if(sals[points[i].salNum][j].filled==1 && allOne(p_s,p_s,qM))
+                {
+                    sub3Matrix3D(p_r,pnx,pny,nz,PI,x0,y0,qI);
+
+                    //prepare ssd3
+                    for(ii=0; ii < p_s; ii++)
+                    {
+                        for(jj=0; jj < p_s; jj++)
+                        {
+                            ssd3[ii][jj] = 0;
+                        }
+                    }
+                    for(ii=0; ii < p_s; ii++)
+                    {
+                        for(jj=0; jj < p_s; jj++)
+                        {
+                            if(pM[ii][jj] == 1)
+                            {
+                                ssd3[ii][jj] = sqrt(
+                                    ((pI[ii][jj][0] - qI[ii][jj][0])*(pI[ii][jj][0] - qI[ii][jj][0])) +
+                                    ((pI[ii][jj][1] - qI[ii][jj][1])*(pI[ii][jj][1] - qI[ii][jj][1])) +
+                                    ((pI[ii][jj][2] - qI[ii][jj][2])*(pI[ii][jj][2] - qI[ii][jj][2])));
+                            }
+                        }
+                    }
+                    float ssd3s = sumMatrix(p_s,p_s,ssd3);
+                    if (min_sum > ssd3s)
+                    {
+                        min_sum = ssd3s;
+                        qx      = sals[points[i].salNum][j].x;
+                        qy      = sals[points[i].salNum][j].y;
+                    }
+                }
+            }
+
+            if (qx != -1 && qy != -1)
+            {
+                //printfFnc("qx %d qy %d\n",qx,qy);
+                //printfFnc("qI\n");
+                sub3Matrix3D(p_r,pnx,pny,nz,PI,qx+p_r,qy+p_r,qI);
+                for(ii=0; ii < p_s; ii++)
+                {
+                    for(jj=0; jj < p_s; jj++)
+                    {
+                        if(points[i].x-p_r+ii > -1
+                        && points[i].x-p_r+ii < nx
+                        && points[i].y-p_r+jj > -1
+                        && points[i].y-p_r+jj < ny
+                        && mask[points[i].x+ii-p_r][points[i].y+jj-p_r] == 0)
+                        {
+                            I[   points[i].x-p_r+ii][points[i].y-p_r+jj][0] = qI[ii][jj][0];
+                            I[   points[i].x-p_r+ii][points[i].y-p_r+jj][1] = qI[ii][jj][1];
+                            I[   points[i].x-p_r+ii][points[i].y-p_r+jj][2] = qI[ii][jj][2];
+                            mask[points[i].x-p_r+ii][points[i].y-p_r+jj]    = 1;
+                            findAndDelete(points[i].salNum,points[i].x+ii-p_r,points[i].y+jj-p_r);
+                        }
+                    }
+                }
+            } else {
+                printfFnc("Brak wzorca. \n");
+                done = 1;
+            }
+        }
+        if (allFilled(salAmount) == 1)
+        {
+
+            done = 1;
+        }
+    }
+
+    done = 0;
+    //printfFnc("allNonZero %d prev %d sumMatrix %f done %d", allNonZero(nx,ny,mask), prev, sumMatrix(nx,ny,mask), done);
+
+    //CRIM INPAINTING
     while (allOne(nx,ny,mask) == 0 && prev != sumMatrix(nx,ny,mask) && done != 1)
     {
         if (giveInfo == 10)
@@ -927,5 +1245,5 @@ void mexFunction(int numOut, mxArray *pmxOut[],
     
     printfFnc("Początek czyszczenia zmiennych. \n");
 
-    clearVars(p_r,p_s,nx,ny,nz);
+    clearVars(p_r,p_s,nx,ny,nz,salAmount);
 }

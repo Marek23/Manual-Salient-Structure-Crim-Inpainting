@@ -951,6 +951,10 @@ void mexFunction(int numOut, mxArray *pmxOut[],
                             I[   points[i].x-p_r+ii][points[i].y-p_r+jj][0] = qI[ii][jj][0];
                             I[   points[i].x-p_r+ii][points[i].y-p_r+jj][1] = qI[ii][jj][1];
                             I[   points[i].x-p_r+ii][points[i].y-p_r+jj][2] = qI[ii][jj][2];
+							
+							//aktualizacja confidence term
+							C[points[i].x+ii][points[i].y+jj] = 1;
+
                             mask[points[i].x-p_r+ii][points[i].y-p_r+jj]    = 1;
                             findAndDelete(points[i].salNum,points[i].x+ii-p_r,points[i].y+jj-p_r);
                         }
@@ -972,8 +976,12 @@ void mexFunction(int numOut, mxArray *pmxOut[],
     //printfFnc("allNonZero %d prev %d sumMatrix %f done %d", allNonZero(nx,ny,mask), prev, sumMatrix(nx,ny,mask), done);
 
     //CRIM INPAINTING
+	double power = 1;
     while (allOne(nx,ny,mask) == 0 && prev != sumMatrix(nx,ny,mask) && done != 1)
     {
+		power = power + 0.0005;
+		double newC = exp(1-power);
+
         if (giveInfo == 10)
         {
             printfFnc("Zaawansowanie: %f \n", sumMatrix(nx,ny,mask)/nx/ny*100);
@@ -982,6 +990,7 @@ void mexFunction(int numOut, mxArray *pmxOut[],
         giveInfo++;
         prev = sumMatrix(nx,ny,mask);
         padarray2d(nx,ny,p_r,mask,pmask);
+		padarray2d(nx,ny,p_r,C,pC);
         padarray3d(nx,ny,nz,p_r,I,PI);
         //printfFnc("padArray. \n");
         imerode(nx,ny,  mask,e1mask,1);
@@ -1201,6 +1210,9 @@ void mexFunction(int numOut, mxArray *pmxOut[],
                             I[maxX-p_r+x][maxY-p_r+y][1] = qI[x][y][1];
                             I[maxX-p_r+x][maxY-p_r+y][2] = qI[x][y][2];
                             //printfFnc("Aktualizacja obrazu. \n");
+
+							//printfFnc("Aktualizacja pewności pikselsa \n");
+							C[maxX-p_r+x][maxY-p_r+y] = newC;
                         }
                         if(maxX+x-p_r > -1
                         && maxX+x-p_r < nx
